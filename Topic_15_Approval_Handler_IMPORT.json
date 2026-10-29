@@ -1,0 +1,338 @@
+{
+  "name": "Topic 15 - Employee Approval Handler",
+  "nodes": [
+    {
+      "id": "71ef4d41-b8aa-4d1a-b7b5-9d9f600fab7c",
+      "name": "Approval Callback Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "topic15/approval",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "fd22295d-f743-4425-aa17-0a8397610323",
+      "name": "Validate Approval Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -670,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const q=$input.first().json.query||{};const token=String(q.token||'');const decision=String(q.decision||'').toLowerCase();const stage=String(q.stage||'').toLowerCase();const valid=/^[a-f0-9]{32}$/.test(token)&&['approve','reject'].includes(decision)&&['manager','hr'].includes(stage);return [{json:{token,decision,stage,valid,message:valid?'':'Invalid token, stage, or decision'}}];"
+      }
+    },
+    {
+      "id": "b0b04fcf-3811-4bf6-a274-904cbd241405",
+      "name": "Valid Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -450,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f086202e-0397-4270-a05b-2b7df137dd9e",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cb4fc793-80d6-40c6-8b07-f400b4789f14",
+      "name": "Apply Approval Atomically",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -210,
+        -120
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.onboarding_employees SET status=CASE WHEN $3='reject' THEN 'REJECTED' WHEN $2='manager' THEN 'PENDING_HR' ELSE 'APPROVED' END,updated_at=now() WHERE (($2='manager' AND manager_token=$1 AND status='PENDING_MANAGER') OR ($2='hr' AND hr_token=$1 AND status='PENDING_HR')) RETURNING id,employee_name,email,manager_email,department,status,hr_token;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate Approval Callback').first().json.token,$('Validate Approval Callback').first().json.stage,$('Validate Approval Callback').first().json.decision] }}"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "3bcce787-048a-4a32-9525-45690feb80f8",
+      "name": "Build Approval Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        -120
+      ],
+      "parameters": {
+        "jsCode": "const r=$input.first().json;const ok=!!r.id;const stage=$('Validate Approval Callback').first().json.stage;const base='REPLACE_WITH_YOUR_N8N_PUBLIC_BASE_URL';const url=base+'/webhook/topic15/approval';return [{json:{...r,ok,stage,message:ok?('Onboarding status: '+r.status):'Approval link invalid, expired, or already used',slack_text:ok&&r.status==='PENDING_HR'?`HR approval required for ${r.employee_name} (${r.email})\\nApprove: ${url}?token=${r.hr_token}&decision=approve&stage=hr\\nReject: ${url}?token=${r.hr_token}&decision=reject&stage=hr`:ok?`Employee onboarding ${r.status}: ${r.employee_name} (${r.email})`:''}}];"
+      }
+    },
+    {
+      "id": "bda1d8bc-7d41-4e8c-af34-7069053fec80",
+      "name": "Approval Applied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        250,
+        -120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b683b4db-f956-4118-96e2-4f5d9669f3b9",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "6af0b84f-9ee0-4433-9596-bc158738c88a",
+      "name": "Slack - Approval Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        470,
+        -230
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_WITH_SLACK_INCOMING_WEBHOOK_URL",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({text:$json.slack_text}) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "bf971ddc-c6eb-4864-bf30-b1cc095d7450",
+      "name": "Approval Success Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        690,
+        -230
+      ],
+      "parameters": {
+        "jsCode": "const x=$('Build Approval Outcome').first().json;return [{json:{success:true,employee_id:x.id,status:x.status,message:x.message}}];"
+      }
+    },
+    {
+      "id": "3a580771-9b55-4917-ae7b-ddaffba23ff1",
+      "name": "Approval Not Applied Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        470,
+        70
+      ],
+      "parameters": {
+        "jsCode": "return [{json:{success:false,message:$('Build Approval Outcome').first().json.message}}];"
+      }
+    },
+    {
+      "id": "8fc44e97-9ae7-4988-bb32-deefae39bb6d",
+      "name": "Invalid Callback Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -210,
+        180
+      ],
+      "parameters": {
+        "jsCode": "return [{json:{success:false,message:$('Validate Approval Callback').first().json.message}}];"
+      }
+    },
+    {
+      "id": "e631a913-aa1f-47c6-a134-de0df7033dc7",
+      "name": "Respond to Approval",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        950,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Approval Callback Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Approval Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Approval Callback": {
+      "main": [
+        [
+          {
+            "node": "Valid Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Approval Atomically": {
+      "main": [
+        [
+          {
+            "node": "Build Approval Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Approval Outcome": {
+      "main": [
+        [
+          {
+            "node": "Approval Applied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Approval Update": {
+      "main": [
+        [
+          {
+            "node": "Approval Success Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Success Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Not Applied Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalid Callback Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Callback?": {
+      "main": [
+        [
+          {
+            "node": "Apply Approval Atomically",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid Callback Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Applied?": {
+      "main": [
+        [
+          {
+            "node": "Slack - Approval Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Approval Not Applied Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

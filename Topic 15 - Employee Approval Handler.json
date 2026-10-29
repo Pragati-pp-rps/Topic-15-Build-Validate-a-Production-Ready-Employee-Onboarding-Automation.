@@ -1,0 +1,741 @@
+{
+  "name": "Topic 15 - Employee Approval Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "topic15/employee-onboarding",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "dded387b-979a-4c9a-9d50-0c310d971062",
+      "name": "Employee Onboarding Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1376,
+        272
+      ],
+      "webhookId": "c80d9fde-46de-4a3f-83a6-82a4ffe5950f"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw=$input.first().json;const p=raw.body||raw;const email=String(p.email||'').trim().toLowerCase();const manager=String(p.manager_email||'').trim().toLowerCase();const name=String(p.employee_name||'').trim();const department=String(p.department||'').trim();const start=String(p.start_date||'').trim();const valid=/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email)&&/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(manager)&&!!name&&!!department&&/^\\d{4}-\\d{2}-\\d{2}$/.test(start);return [{json:{employee_name:name,email,manager_email:manager,department,start_date:start,valid,error:valid?'':'Provide employee_name, valid email, manager_email, department and start_date (YYYY-MM-DD)',request_id:$execution.id}}];"
+      },
+      "id": "ea4d281c-71e9-473e-a54e-3901faf8ab52",
+      "name": "Validate Employee Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1136,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "96937d8b-e251-4d95-aae3-be74e006e4dc",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d9717110-868b-4056-942c-3241ecf47f39",
+      "name": "Valid Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -896,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, status FROM public.onboarding_employees WHERE email=$1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate Employee Request').first().json.email] }}"
+        }
+      },
+      "id": "6b39cbe3-73eb-4411-8940-e625b79709aa",
+      "name": "Check Existing Employee",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -656,
+        128
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "TCpwyMALQ2hX4Vct",
+          "name": "Pragati Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.all();return [{json:{duplicate:r.length>0&&!!r[0].json.id,existing:r[0]?.json||{}}}];"
+      },
+      "id": "1b6b05af-b987-463f-a5e5-9c937d3343fa",
+      "name": "Check Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a6afc449-9dce-4e97-9418-b308be048790",
+              "leftValue": "={{ $json.duplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e32e324b-798d-4254-8146-79f145d67367",
+      "name": "Already Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.onboarding_employees (employee_name,email,manager_email,department,start_date,status,manager_token,hr_token) VALUES ($1,$2,$3,$4,$5::date,'PENDING_MANAGER',md5(random()::text||clock_timestamp()::text),md5(random()::text||clock_timestamp()::text)) RETURNING id,employee_name,email,manager_email,department,start_date,status,manager_token,hr_token;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate Employee Request').first().json.employee_name,$('Validate Employee Request').first().json.email,$('Validate Employee Request').first().json.manager_email,$('Validate Employee Request').first().json.department,$('Validate Employee Request').first().json.start_date] }}"
+        }
+      },
+      "id": "89f224d2-076a-4ac5-954d-35a5ec4d74c1",
+      "name": "Create Pending Employee",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "TCpwyMALQ2hX4Vct",
+          "name": "Pragati Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const e=$input.first().json;const base='REPLACE_WITH_YOUR_N8N_PUBLIC_BASE_URL';const u=base+'/webhook/topic15/approval';return [{json:{...e,slack_text:`New employee onboarding: ${e.employee_name} (${e.email})\\nDepartment: ${e.department}\\nManager: ${e.manager_email}\\nApprove: ${u}?token=${e.manager_token}&decision=approve&stage=manager\\nReject: ${u}?token=${e.manager_token}&decision=reject&stage=manager`}}];"
+      },
+      "id": "5a0f6e87-66e9-4be3-8803-578639f0ddeb",
+      "name": "Prepare Manager Approval Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_WITH_SLACK_INCOMING_WEBHOOK_URL",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({text:$json.slack_text}) }}",
+        "options": {}
+      },
+      "id": "2472e61a-1fa4-4a69-b4a3-522721ccf691",
+      "name": "Slack - Manager Approval Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        464,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const e=$('Create Pending Employee').first().json;return [{json:{success:true,employee_id:e.id,status:e.status,message:'Request created. Manager approval requested.'}}];"
+      },
+      "id": "a1dbca40-08d0-46c7-b54a-1a7474b52633",
+      "name": "New Request Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const e=$('Check Duplicate').first().json.existing;return [{json:{success:false,status:'duplicate',employee_id:e.id,message:'Employee email already exists.'}}];"
+      },
+      "id": "1e07a631-c4b9-4c62-8259-2f5317bfd5e1",
+      "name": "Duplicate Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{success:false,status:'invalid',message:$('Validate Employee Request').first().json.error}}];"
+      },
+      "id": "50223a82-5516-4c3f-812a-cdf9e5679bee",
+      "name": "Invalid Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "675603ae-1500-4df0-b9b3-ae1eeef568fc",
+      "name": "Respond to Onboarding Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        944,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "path": "topic15/approval",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1701dc43-dad4-40b2-9cad-7ad09e9aad76",
+      "name": "Approval Callback Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -2016,
+        1232
+      ],
+      "webhookId": "bcc3ea60-ecf4-4180-bbff-7c7840939b15"
+    },
+    {
+      "parameters": {
+        "jsCode": "const q=$input.first().json.query||{};const token=String(q.token||'');const decision=String(q.decision||'').toLowerCase();const stage=String(q.stage||'').toLowerCase();const valid=/^[a-f0-9]{32}$/.test(token)&&['approve','reject'].includes(decision)&&['manager','hr'].includes(stage);return [{json:{token,decision,stage,valid,message:valid?'':'Invalid token, stage, or decision'}}];"
+      },
+      "id": "7d0910c4-06db-4c94-82e2-6fbf18b104b1",
+      "name": "Validate Approval Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1776,
+        1232
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "f086202e-0397-4270-a05b-2b7df137dd9e",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "58f0d362-bf2c-4f63-b14e-1873cdb21ed8",
+      "name": "Valid Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1568,
+        1232
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.onboarding_employees SET status=CASE WHEN $3='reject' THEN 'REJECTED' WHEN $2='manager' THEN 'PENDING_HR' ELSE 'APPROVED' END,updated_at=now() WHERE (($2='manager' AND manager_token=$1 AND status='PENDING_MANAGER') OR ($2='hr' AND hr_token=$1 AND status='PENDING_HR')) RETURNING id,employee_name,email,manager_email,department,status,hr_token;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate Approval Callback').first().json.token,$('Validate Approval Callback').first().json.stage,$('Validate Approval Callback').first().json.decision] }}"
+        }
+      },
+      "id": "6da4a118-97f3-485a-bc83-8756558e8a24",
+      "name": "Apply Approval Atomically",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -1328,
+        1104
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "TCpwyMALQ2hX4Vct",
+          "name": "Pragati Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json;const ok=!!r.id;const stage=$('Validate Approval Callback').first().json.stage;const base='REPLACE_WITH_YOUR_N8N_PUBLIC_BASE_URL';const url=base+'/webhook/topic15/approval';return [{json:{...r,ok,stage,message:ok?('Onboarding status: '+r.status):'Approval link invalid, expired, or already used',slack_text:ok&&r.status==='PENDING_HR'?`HR approval required for ${r.employee_name} (${r.email})\\nApprove: ${url}?token=${r.hr_token}&decision=approve&stage=hr\\nReject: ${url}?token=${r.hr_token}&decision=reject&stage=hr`:ok?`Employee onboarding ${r.status}: ${r.employee_name} (${r.email})`:''}}];"
+      },
+      "id": "1b79e1da-0a4c-43db-a1e9-cbc3cfcae632",
+      "name": "Build Approval Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1088,
+        1104
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b683b4db-f956-4118-96e2-4f5d9669f3b9",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c545734c-5c0a-4c1d-932a-a3efb1005a40",
+      "name": "Approval Applied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        1104
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_WITH_SLACK_INCOMING_WEBHOOK_URL",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({text:$json.slack_text}) }}",
+        "options": {}
+      },
+      "id": "f39cd93c-437f-4904-b5d5-c4fea36c9f36",
+      "name": "Slack - Approval Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -640,
+        992
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Build Approval Outcome').first().json;return [{json:{success:true,employee_id:x.id,status:x.status,message:x.message}}];"
+      },
+      "id": "b33ff8c2-7ccc-4370-ae1a-0c4911650e17",
+      "name": "Approval Success Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{success:false,message:$('Build Approval Outcome').first().json.message}}];"
+      },
+      "id": "19c824c5-ffc4-4aab-98ab-d9d454e97937",
+      "name": "Approval Not Applied Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{success:false,message:$('Validate Approval Callback').first().json.message}}];"
+      },
+      "id": "98557c1d-e1ef-423d-90cd-facd1f317d43",
+      "name": "Invalid Callback Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1328,
+        1408
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "54013eef-9d04-4b94-b69a-e6cdd40a7fa6",
+      "name": "Respond to Approval",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -160,
+        1232
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Employee Onboarding Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Employee Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Employee Request": {
+      "main": [
+        [
+          {
+            "node": "Valid Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Employee": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Already Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Pending Employee": {
+      "main": [
+        [
+          {
+            "node": "Prepare Manager Approval Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Manager Approval Message": {
+      "main": [
+        [
+          {
+            "node": "Slack - Manager Approval Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Manager Approval Alert": {
+      "main": [
+        [
+          {
+            "node": "New Request Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Request Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Onboarding Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Onboarding Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalid Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Onboarding Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Request?": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Employee",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Exists?": {
+      "main": [
+        [
+          {
+            "node": "Duplicate Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Pending Employee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Callback Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Approval Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Approval Callback": {
+      "main": [
+        [
+          {
+            "node": "Valid Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Approval Atomically": {
+      "main": [
+        [
+          {
+            "node": "Build Approval Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Approval Outcome": {
+      "main": [
+        [
+          {
+            "node": "Approval Applied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Approval Update": {
+      "main": [
+        [
+          {
+            "node": "Approval Success Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Success Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Not Applied Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalid Callback Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Callback?": {
+      "main": [
+        [
+          {
+            "node": "Apply Approval Atomically",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid Callback Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Applied?": {
+      "main": [
+        [
+          {
+            "node": "Slack - Approval Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Approval Not Applied Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "25b01efa-b513-4db5-bbb1-0a9a876bba25",
+  "meta": {
+    "instanceId": "a03c7678428ef19ededbf912f16f7d5798ec7b9ab4c17f2a2def6a9e791e7215"
+  },
+  "nodeGroups": [],
+  "id": "NaBPYx3xl2q2hNxL",
+  "tags": []
+}

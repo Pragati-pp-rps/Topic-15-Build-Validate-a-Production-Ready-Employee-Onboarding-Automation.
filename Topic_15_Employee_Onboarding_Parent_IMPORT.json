@@ -1,0 +1,390 @@
+{
+  "name": "Topic 15 - Employee Onboarding Parent",
+  "nodes": [
+    {
+      "id": "4849d8ad-397e-449f-a6a5-c4f3541327e0",
+      "name": "Employee Onboarding Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1100,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "topic15/employee-onboarding",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "aea7aa1b-d9fd-4fa6-8078-f73c9007d8d5",
+      "name": "Validate Employee Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -860,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const raw=$input.first().json;const p=raw.body||raw;const email=String(p.email||'').trim().toLowerCase();const manager=String(p.manager_email||'').trim().toLowerCase();const name=String(p.employee_name||'').trim();const department=String(p.department||'').trim();const start=String(p.start_date||'').trim();const valid=/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email)&&/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(manager)&&!!name&&!!department&&/^\\d{4}-\\d{2}-\\d{2}$/.test(start);return [{json:{employee_name:name,email,manager_email:manager,department,start_date:start,valid,error:valid?'':'Provide employee_name, valid email, manager_email, department and start_date (YYYY-MM-DD)',request_id:$execution.id}}];"
+      }
+    },
+    {
+      "id": "5e22ce49-2d31-41b6-ab7a-80b2f7a5851e",
+      "name": "Valid Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -630,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "96937d8b-e251-4d95-aae3-be74e006e4dc",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "352f3aa5-7e57-4190-a77b-34094c42f5a6",
+      "name": "Check Existing Employee",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -390,
+        -140
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, status FROM public.onboarding_employees WHERE email=$1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate Employee Request').first().json.email] }}"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c0017766-13e2-47c4-91e9-e2ed366e0f0a",
+      "name": "Check Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -170,
+        -140
+      ],
+      "parameters": {
+        "jsCode": "const r=$input.all();return [{json:{duplicate:r.length>0&&!!r[0].json.id,existing:r[0]?.json||{}}}];"
+      }
+    },
+    {
+      "id": "b4177827-b5d3-46dd-adc7-48b8ae7164af",
+      "name": "Already Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        50,
+        -140
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a6afc449-9dce-4e97-9418-b308be048790",
+              "leftValue": "={{ $json.duplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "966bbcae-aa7a-44d6-a96d-3cf9bf18eafd",
+      "name": "Create Pending Employee",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        270,
+        -260
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.onboarding_employees (employee_name,email,manager_email,department,start_date,status,manager_token,hr_token) VALUES ($1,$2,$3,$4,$5::date,'PENDING_MANAGER',md5(random()::text||clock_timestamp()::text),md5(random()::text||clock_timestamp()::text)) RETURNING id,employee_name,email,manager_email,department,start_date,status,manager_token,hr_token;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate Employee Request').first().json.employee_name,$('Validate Employee Request').first().json.email,$('Validate Employee Request').first().json.manager_email,$('Validate Employee Request').first().json.department,$('Validate Employee Request').first().json.start_date] }}"
+        }
+      }
+    },
+    {
+      "id": "a792999c-25ac-4c1a-a5b8-925e247c2b59",
+      "name": "Prepare Manager Approval Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        -260
+      ],
+      "parameters": {
+        "jsCode": "const e=$input.first().json;const base='REPLACE_WITH_YOUR_N8N_PUBLIC_BASE_URL';const u=base+'/webhook/topic15/approval';return [{json:{...e,slack_text:`New employee onboarding: ${e.employee_name} (${e.email})\\nDepartment: ${e.department}\\nManager: ${e.manager_email}\\nApprove: ${u}?token=${e.manager_token}&decision=approve&stage=manager\\nReject: ${u}?token=${e.manager_token}&decision=reject&stage=manager`}}];"
+      }
+    },
+    {
+      "id": "513efd44-98ab-4f00-b6f0-894806401887",
+      "name": "Slack - Manager Approval Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        730,
+        -260
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_WITH_SLACK_INCOMING_WEBHOOK_URL",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({text:$json.slack_text}) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "9d3a04ba-78d2-404e-9846-d21c30660f9c",
+      "name": "New Request Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        950,
+        -260
+      ],
+      "parameters": {
+        "jsCode": "const e=$('Create Pending Employee').first().json;return [{json:{success:true,employee_id:e.id,status:e.status,message:'Request created. Manager approval requested.'}}];"
+      }
+    },
+    {
+      "id": "f814c149-5b65-47e3-95d0-07749327455c",
+      "name": "Duplicate Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        270,
+        -40
+      ],
+      "parameters": {
+        "jsCode": "const e=$('Check Duplicate').first().json.existing;return [{json:{success:false,status:'duplicate',employee_id:e.id,message:'Employee email already exists.'}}];"
+      }
+    },
+    {
+      "id": "273cfe0e-5ff1-401f-aeab-46b02c646403",
+      "name": "Invalid Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -390,
+        220
+      ],
+      "parameters": {
+        "jsCode": "return [{json:{success:false,status:'invalid',message:$('Validate Employee Request').first().json.error}}];"
+      }
+    },
+    {
+      "id": "0647c617-b3a3-4c90-bb37-44a9606f836e",
+      "name": "Respond to Onboarding Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Employee Onboarding Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Employee Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Employee Request": {
+      "main": [
+        [
+          {
+            "node": "Valid Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Employee": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Already Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Pending Employee": {
+      "main": [
+        [
+          {
+            "node": "Prepare Manager Approval Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Manager Approval Message": {
+      "main": [
+        [
+          {
+            "node": "Slack - Manager Approval Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Manager Approval Alert": {
+      "main": [
+        [
+          {
+            "node": "New Request Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Request Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Onboarding Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Onboarding Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalid Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Onboarding Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Request?": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Employee",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Exists?": {
+      "main": [
+        [
+          {
+            "node": "Duplicate Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Pending Employee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}
